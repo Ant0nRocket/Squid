@@ -172,7 +172,7 @@ echo
 echo "Первые 10 доменов из списка:"
 head -10 /etc/squid/domains.list
 
-# Создаем основной конфиг Squid 6
+# Создаем основной конфиг Squid 6 - ВСЕ В ОДНУ СТРОКУ!
 echo "Создание конфигурации Squid 6..."
 sudo tee /etc/squid/squid.conf > /dev/null <<EOF
 # Squid 6.13 Configuration
@@ -200,14 +200,8 @@ acl CONNECT method CONNECT
 # Domains for SOCKS routing
 acl socks_domains dstdomain "/etc/squid/domains.list"
 
-# SOCKS5 upstream proxy
-cache_peer $ADDR parent $PORT 0 \\
-    proxy-only \\
-    login=$USER:$PASS \\
-    connect-timeout=5 \\
-    connect-fail-limit=3 \\
-    name=socks_peer \\
-    socksversion=5
+# SOCKS5 upstream proxy - ВСЕ В ОДНОЙ СТРОКЕ!
+cache_peer $ADDR parent $PORT 0 proxy-only login=$USER:$PASS connect-timeout=5 connect-fail-limit=3 name=socks_peer socksversion=5
 
 # Access control for SOCKS
 cache_peer_access socks_peer allow socks_domains
