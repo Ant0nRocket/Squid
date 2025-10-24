@@ -17,7 +17,8 @@ read_password() {
             echo "Пароль не может быть пустым. Попробуйте снова."
         fi
     done
-    echo -n "$password"
+    # Убираем ВСЕ переносы строк
+    echo -n "$password" | tr -d '\n\r\t'
 }
 
 # Функция для валидации CIDR сети
@@ -76,7 +77,11 @@ PORT=${PORT:-42379}
 read -p "Имя пользователя [proxy_user]: " USER
 USER=${USER:-proxy_user}
 
+echo "Введите пароль:"
 PASS=$(read_password "Пароль: ")
+
+# ДОПОЛНИТЕЛЬНАЯ ОЧИСТКА ПАРОЛЯ - на всякий случай
+PASS=$(echo -n "$PASS" | tr -d '\n\r\t' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
 # Запрашиваем локальную сеть
 echo
@@ -225,6 +230,7 @@ cache_log /var/log/squid/cache.log
 # Shutdown timeout
 shutdown_lifetime 5 seconds
 EOF
+
 
 # Устанавливаем правильные права на конфиг
 sudo chown proxy:proxy /etc/squid/squid.conf
