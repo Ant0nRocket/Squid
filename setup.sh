@@ -17,7 +17,8 @@ read_password() {
             echo "Пароль не может быть пустым. Попробуйте снова."
         fi
     done
-    echo -n "$password"  # -n убирает автоматический перенос строки
+    # Убираем ВСЕ переносы строк и пробелы в начале/конце
+    echo -n "$password" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
 # Функция для валидации CIDR сети
@@ -62,7 +63,6 @@ PORT=${PORT:-42379}
 read -p "Имя пользователя [proxy_user]: " USER
 USER=${USER:-proxy_user}
 
-echo "Введите пароль:"
 PASS=$(read_password "Пароль: ")
 
 # Запрашиваем локальную сеть
@@ -116,6 +116,7 @@ else
 fi
 
 # Создаем скрипт для генерации конфига с прямыми переменными
+# Используем printf для точного контроля над выводом
 sudo tee /etc/squid/generate-socks-config.sh > /dev/null <<EOF
 #!/bin/bash
 # Скрипт генерации конфигурации SOCKS peer
@@ -133,11 +134,15 @@ if [ -z "\$SOCKS_USER" ] || [ -z "\$SOCKS_PASS" ] || [ -z "\$ADDR" ] || [ -z "\$
     exit 1
 fi
 
-# Экранируем пароль для использования в конфигурации Squid
-ESCAPED_PASS=\$(echo "\$SOCKS_PASS" | sed 's/[]\/\$*.^|[]/\\\\&/g')
+# Дополнительно очищаем пароль от любых переносов
+CLEAN_PASS=\$(echo -n "\$SOCKS_PASS" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
-# Генерируем конфигурационную строку в ОДНУ строку
-echo "cache_peer \$ADDR parent \$PORT 0 proxy-only login=\$SOCKS_USER:\$ESCAPED_PASS round-robin no-query connect-fail-limit=2 name=socks_proxy" > /etc/squid/socks-peer.conf
+# Экранируем пароль для использования в конфигурации Squid
+ESCAPED_PASS=\$(echo -n "\$CLEAN_PASS" | sed 's/[]\/\$*.^|[]/\\\\&/g')
+
+# Генерируем конфигурационную строку в ОДНУ строку с помощью printf
+printf "cache_peer %s parent %s 0 proxy-only login=%s:%s round-robin no-query connect-fail-limit=2 name=socks_proxy\\n" \\
+  "\$ADDR" "\$PORT" "\$SOCKS_USER" "\$ESCAPED_PASS" > /etc/squid/socks-peer.conf
 
 # Устанавливаем права
 chown proxy:proxy /etc/squid/socks-peer.conf
@@ -197,12 +202,6 @@ sudo chmod +x /etc/squid/generate-socks-config.sh
 # Запускаем генерацию конфига
 echo "Генерация конфигурации SOCKS..."
 sudo /etc/squid/generate-socks-config.sh
-
-# Проверяем созданный файл
-echo "Проверка созданного конфига SOCKS..."
-echo "=== Содержимое socks-peer.conf ==="
-sudo cat /etc/squid/socks-peer.conf
-echo "=== Конец файла ==="
 
 # Обрабатываем файл доменов
 echo "Обработка файла доменов..."
