@@ -161,15 +161,14 @@ echo
 echo "Первые 10 доменов из списка:"
 head -10 /etc/squid/domains.list
 
-# Создаем основной конфиг Squid - ПРОСТОЙ И РАБОЧИЙ
+# Создаем основной конфиг Squid - БЕЗ ИКОНОК!
 echo "Создание конфигурации Squid..."
 sudo tee /etc/squid/squid.conf > /dev/null <<EOF
 # Basic settings
 http_port 3128 transparent
 
-# Disable caching and icons
+# Disable caching
 cache deny all
-icon_directory /nonexistent
 
 # Access Control Lists
 acl local_net src $LOCAL_NET
@@ -243,7 +242,12 @@ sudo netfilter-persistent save
 
 # Проверяем конфигурацию Squid
 echo "Проверка конфигурации Squid..."
-sudo squid -k parse
+if sudo squid -k parse; then
+    echo "✅ Конфигурация верна"
+else
+    echo "❌ Ошибка в конфигурации Squid!"
+    exit 1
+fi
 
 # Инициализируем кеш
 echo "Инициализация структуры Squid..."
