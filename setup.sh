@@ -62,7 +62,6 @@ PORT=${PORT:-42379}
 read -p "Имя пользователя [proxy_user]: " USER
 USER=${USER:-proxy_user}
 
-echo "Введите пароль:"
 PASS=$(read_password "Пароль: ")
 
 # Запрашиваем локальную сеть
