@@ -77,7 +77,6 @@ PORT=${PORT:-42379}
 read -p "Имя пользователя [proxy_user]: " USER
 USER=${USER:-proxy_user}
 
-echo "Введите пароль:"
 PASS=$(read_password "Пароль: ")
 
 # ДОПОЛНИТЕЛЬНАЯ ОЧИСТКА ПАРОЛЯ - на всякий случай
@@ -177,7 +176,7 @@ echo
 echo "Первые 10 доменов из списка:"
 head -10 /etc/squid/domains.list
 
-# Создаем основной конфиг Squid 6 - ВСЕ В ОДНУ СТРОКУ!
+# Создаем основной конфиг Squid 6 - исправленный для версии 6.13
 echo "Создание конфигурации Squid 6..."
 sudo tee /etc/squid/squid.conf > /dev/null <<EOF
 # Squid 6.13 Configuration
@@ -185,7 +184,6 @@ sudo tee /etc/squid/squid.conf > /dev/null <<EOF
 
 # Basic settings
 http_port 3128 transparent
-dns_v4_first on
 via off
 forwarded_for delete
 
@@ -206,7 +204,7 @@ acl CONNECT method CONNECT
 acl socks_domains dstdomain "/etc/squid/domains.list"
 
 # SOCKS5 upstream proxy - ВСЕ В ОДНОЙ СТРОКЕ!
-cache_peer $ADDR parent $PORT 0 proxy-only login=$USER:$PASS connect-timeout=5 connect-fail-limit=3 name=socks_peer socksversion=5
+cache_peer $ADDR parent $PORT 0 proxy-only login=$USER:$PASS connect-timeout=5 connect-fail-limit=3 name=socks_peer
 
 # Access control for SOCKS
 cache_peer_access socks_peer allow socks_domains
@@ -230,7 +228,6 @@ cache_log /var/log/squid/cache.log
 # Shutdown timeout
 shutdown_lifetime 5 seconds
 EOF
-
 
 # Устанавливаем правильные права на конфиг
 sudo chown proxy:proxy /etc/squid/squid.conf
