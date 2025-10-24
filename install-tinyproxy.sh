@@ -81,8 +81,10 @@ echo ""
 echo "Configuration summary:"
 echo "----------------------"
 echo "Port: $PORT"
-echo "Username: $USERNAME"
+echo "Username: $USERNAME" 
+echo "Password: ********"
 echo "Bind address: 0.0.0.0 (all interfaces)"
+echo "Authentication: Single user (BasicAuth in config)"
 echo ""
 
 read -p "Proceed with installation? (y/n): " CONFIRM
@@ -98,13 +100,13 @@ print_status "Starting installation..."
 print_status "Updating package list..."
 apt update
 
-# Install required packages
-print_status "Installing TinyProxy and Apache2-utils..."
-apt install -y tinyproxy apache2-utils
+# Install TinyProxy (apache2-utils не нужен для базовой аутентификации)
+print_status "Installing TinyProxy..."
+apt install -y tinyproxy
 
 # Check if installation was successful
 if [ $? -ne 0 ]; then
-    print_error "Failed to install packages. Please check your internet connection and try again."
+    print_error "Failed to install TinyProxy. Please check your internet connection and try again."
     exit 1
 fi
 
@@ -141,7 +143,7 @@ MaxSpareServers 20
 StartServers 10
 MaxRequestsPerChild 0
 
-# Authentication
+# Authentication - Single user
 BasicAuth $USERNAME $PASSWORD
 
 # Access control - allow from anywhere since we have authentication
@@ -162,15 +164,13 @@ ConnectPort 110
 ConnectPort 995
 EOF
 
-# Create password file (alternative method)
-print_status "Setting up authentication..."
-mkdir -p /etc/tinyproxy
-echo "$PASSWORD" | htpasswd -i -c /etc/tinyproxy/htpasswd "$USERNAME" > /dev/null 2>&1
-
 # Set proper permissions
 print_status "Setting file permissions..."
 chown tinyproxy:tinyproxy /var/log/tinyproxy/ 2>/dev/null
 chmod 755 /var/log/tinyproxy/ 2>/dev/null
+
+# Secure the config file (пароль в plain text!)
+chmod 600 /etc/tinyproxy/tinyproxy.conf
 
 # Configure firewall
 print_status "Configuring firewall..."
@@ -218,15 +218,15 @@ echo ""
 echo "Usage Examples:"
 echo "---------------"
 echo "Linux/Mac:"
-echo "  export http_proxy=http://$USERNAME:YOUR_PASSWORD@$SERVER_IP:$PORT"
-echo "  export https_proxy=http://$USERNAME:YOUR_PASSWORD@$SERVER_IP:$PORT"
+echo "  export http_proxy=http://$USERNAME:$PASSWORD@$SERVER_IP:$PORT"
+echo "  export https_proxy=http://$USERNAME:$PASSWORD@$SERVER_IP:$PORT"
 echo ""
 echo "curl:"
-echo "  curl --proxy http://$USERNAME:YOUR_PASSWORD@$SERVER_IP:$PORT http://httpbin.org/ip"
+echo "  curl --proxy http://$USERNAME:$PASSWORD@$SERVER_IP:$PORT http://httpbin.org/ip"
 echo ""
 echo "wget:"
 echo "  wget -e use_proxy=yes -e http_proxy=$SERVER_IP:$PORT \\"
-echo "       --proxy-user=$USERNAME --proxy-password=YOUR_PASSWORD \\"
+echo "       --proxy-user=$USERNAME --proxy-password='$PASSWORD' \\"
 echo "       http://example.com/file.txt"
 echo ""
 echo "Browser settings:"
@@ -240,11 +240,15 @@ echo "  sudo systemctl status tinyproxy  # Check status"
 echo "  sudo systemctl restart tinyproxy # Restart service"
 echo "  sudo tail -f /var/log/tinyproxy/tinyproxy.log  # View logs"
 echo ""
-print_warning "Important: Remember your password as it's stored in plain text in the configuration!"
-print_warning "For security, consider changing the password regularly."
+print_warning "Important Security Notes:"
+print_warning "1. Password is stored in PLAIN TEXT in /etc/tinyproxy/tinyproxy.conf"
+print_warning "2. For multiple users, consider using htpasswd file method"
+print_warning "3. Change password regularly by editing the config file"
+print_warning "4. The config file is secured with chmod 600"
 echo ""
-echo "Configuration file: /etc/tinyproxy/tinyproxy.conf"
-echo "Backup file: /etc/tinyproxy/tinyproxy.conf.backup"
+echo "To change password later:"
+echo "  sudo nano /etc/tinyproxy/tinyproxy.conf"
+echo "  # Edit the BasicAuth line and restart: sudo systemctl restart tinyproxy"
 echo ""
 
 # Test the proxy
