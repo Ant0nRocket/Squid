@@ -17,8 +17,7 @@ read_password() {
             echo "Пароль не может быть пустым. Попробуйте снова."
         fi
     done
-    # Убираем все специальные символы и экранируем для использования в конфигах
-    echo "$password" | tr -d '\n' | sed 's/[]\/$*.^|[]/\\&/g'
+    echo -n "$password"  # -n убирает автоматический перенос строки
 }
 
 # Функция для валидации CIDR сети
@@ -116,56 +115,80 @@ else
     echo "IP forwarding уже включен"
 fi
 
-# Создаем файл с переменными окружения с правильным экранированием
-echo "Создание файла с переменными окружения..."
-sudo tee /etc/squid/socks-auth.env > /dev/null <<EOF
+# Создаем скрипт для генерации конфига с прямыми переменными
+sudo tee /etc/squid/generate-socks-config.sh > /dev/null <<EOF
+#!/bin/bash
+# Скрипт генерации конфигурации SOCKS peer
+
+# Параметры (будут переданы как аргументы или установлены напрямую)
 ADDR='$ADDR'
 PORT='$PORT'
 SOCKS_USER='$USER'
 SOCKS_PASS='$PASS'
 LOCAL_NET='$LOCAL_NET'
-EOF
-
-# Устанавливаем права на файл с переменными
-sudo chown proxy:proxy /etc/squid/socks-auth.env
-sudo chmod 600 /etc/squid/socks-auth.env
-
-# Создаем скрипт для генерации конфига
-sudo tee /etc/squid/generate-socks-config.sh > /dev/null <<'EOF'
-#!/bin/bash
-# Скрипт генерации конфигурации SOCKS peer
-
-# Загружаем переменные из файла с помощью source
-if [ -f /etc/squid/socks-auth.env ]; then
-    # Используем source для загрузки переменных
-    set -a  # Автоматически экспортировать все переменные
-    source /etc/squid/socks-auth.env
-    set +a  # Отключить автоматический экспорт
-fi
 
 # Проверяем, что все переменные установлены
-if [ -z "$SOCKS_USER" ] || [ -z "$SOCKS_PASS" ] || [ -z "$ADDR" ] || [ -z "$PORT" ] || [ -z "$LOCAL_NET" ]; then
-    echo "Ошибка: Не все переменные окружения установлены"
-    echo "SOCKS_USER: $SOCKS_USER"
-    echo "ADDR: $ADDR" 
-    echo "PORT: $PORT"
-    echo "LOCAL_NET: $LOCAL_NET"
+if [ -z "\$SOCKS_USER" ] || [ -z "\$SOCKS_PASS" ] || [ -z "\$ADDR" ] || [ -z "\$PORT" ] || [ -z "\$LOCAL_NET" ]; then
+    echo "Ошибка: Не все переменные установлены"
     exit 1
 fi
 
 # Экранируем пароль для использования в конфигурации Squid
-# Убираем все символы, которые могут сломать конфиг
-ESCAPED_PASS=$(echo "$SOCKS_PASS" | sed 's/[]\/$*.^|[]/\\&/g')
+ESCAPED_PASS=\$(echo "\$SOCKS_PASS" | sed 's/[]\/\$*.^|[]/\\\\&/g')
 
 # Генерируем конфигурационную строку в ОДНУ строку
-echo "cache_peer $ADDR parent $PORT 0 proxy-only login=$SOCKS_USER:$ESCAPED_PASS round-robin no-query connect-fail-limit=2 name=socks_proxy" > /etc/squid/socks-peer.conf
+echo "cache_peer \$ADDR parent \$PORT 0 proxy-only login=\$SOCKS_USER:\$ESCAPED_PASS round-robin no-query connect-fail-limit=2 name=socks_proxy" > /etc/squid/socks-peer.conf
 
 # Устанавливаем права
 chown proxy:proxy /etc/squid/socks-peer.conf
 chmod 600 /etc/squid/socks-peer.conf
 
-echo "Конфигурация SOCKS peer обновлена: $ADDR:$PORT"
-echo "Локальная сеть: $LOCAL_NET"
+echo "Конфигурация SOCKS peer обновлена: \$ADDR:\$PORT"
+echo "Локальная сеть: \$LOCAL_NET"
+
+# Создаем основной конфиг Squid
+cat > /etc/squid/squid.conf <<SQUIDEOF
+# Базовые настройки transparent proxy
+http_port 3128 transparent
+visible_hostname ubuntu-vpc
+
+# Отключаем кэширование для transparent proxy
+cache deny all
+
+# ACL для локальной сети
+acl local_net src \$LOCAL_NET
+
+# Создаем ACL для доменов из файла через внешний файл
+acl socks_domains dstdomain "/etc/squid/domains.list"
+
+# Подключаем конфигурацию SOCKS peer
+include /etc/squid/socks-peer.conf
+
+# Управление доступом к SOCKS proxy
+cache_peer_access socks_proxy allow socks_domains
+cache_peer_access socks_proxy deny all
+
+# Правила маршрутизации - для доменов из списка используем SOCKS
+never_direct allow socks_domains
+
+# Для всего остального - прямое соединение
+always_direct allow all
+
+# Разрешаем доступ из локальной сети
+http_access allow local_net
+
+# Запрещаем всё остальное
+http_access deny all
+
+# Логирование
+access_log /var/log/squid/access.log
+cache_log /var/log/squid/cache.log
+
+# Безопасность
+coredump_dir /var/spool/squid
+SQUIDEOF
+
+echo "Основной конфиг Squid обновлен"
 EOF
 
 # Делаем скрипт исполняемым
@@ -177,7 +200,9 @@ sudo /etc/squid/generate-socks-config.sh
 
 # Проверяем созданный файл
 echo "Проверка созданного конфига SOCKS..."
+echo "=== Содержимое socks-peer.conf ==="
 sudo cat /etc/squid/socks-peer.conf
+echo "=== Конец файла ==="
 
 # Обрабатываем файл доменов
 echo "Обработка файла доменов..."
@@ -255,59 +280,13 @@ sudo iptables -t nat -A POSTROUTING -o $INTERFACE -j MASQUERADE
 echo "Сохранение правил iptables..."
 sudo netfilter-persistent save
 
-# Создаем основной конфиг Squid для Ubuntu 18 (Squid 3.5)
-echo "Создание основного конфига Squid для Ubuntu 18..."
-sudo tee /etc/squid/squid.conf > /dev/null <<EOF
-# Базовые настройки transparent proxy
-http_port 3128 transparent
-visible_hostname ubuntu-vpc
-
-# Отключаем кэширование для transparent proxy
-cache deny all
-
-# ACL для локальной сети
-acl local_net src $LOCAL_NET
-
-# Создаем ACL для доменов из файла через внешний файл
-acl socks_domains dstdomain "/etc/squid/domains.list"
-
-# Подключаем конфигурацию SOCKS peer
-include /etc/squid/socks-peer.conf
-
-# Управление доступом к SOCKS proxy
-cache_peer_access socks_proxy allow socks_domains
-cache_peer_access socks_proxy deny all
-
-# Правила маршрутизации - для доменов из списка используем SOCKS
-never_direct allow socks_domains
-
-# Для всего остального - прямое соединение
-always_direct allow all
-
-# Разрешаем доступ из локальной сети
-http_access allow local_net
-
-# Запрещаем всё остальное
-http_access deny all
-
-# Логирование
-access_log /var/log/squid/access.log
-cache_log /var/log/squid/cache.log
-
-# Безопасность
-coredump_dir /var/spool/squid
-EOF
-
 # Убедимся, что директории для логов существуют
 sudo mkdir -p /var/log/squid
 sudo chown proxy:proxy /var/log/squid
 
-# Перезагружаем systemd и запускаем сервисы
+# Перезагружаем systemd
 echo "Перезагрузка systemd..."
 sudo systemctl daemon-reload
-
-echo "Запуск сервиса генерации конфига..."
-sudo systemctl start squid-config
 
 echo "Проверка конфигурации Squid..."
 sudo squid -k parse
@@ -320,6 +299,7 @@ if [ $? -eq 0 ]; then
     sudo systemctl enable squid
     
     echo "Проверка статуса Squid..."
+    sleep 2
     sudo systemctl status squid --no-pager -l
 else
     echo "Ошибка в конфигурации Squid. Проверьте файлы конфигурации."
@@ -335,7 +315,6 @@ echo "Созданные файлы:"
 echo "  /etc/squid/squid.conf"
 echo "  /etc/squid/socks-peer.conf"
 echo "  /etc/squid/domains.list ($DOMAIN_COUNT доменов)"
-echo "  /etc/squid/socks-auth.env"
 echo "  /etc/squid/generate-socks-config.sh"
 echo
 echo "Сетевые настройки:"
