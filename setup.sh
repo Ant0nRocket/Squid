@@ -77,40 +77,40 @@ else
     echo "IP forwarding уже включен"
 fi
 
-# Создаем директорию для systemd
-sudo mkdir -p /etc/systemd/system/squid.service.d
-
-# Создаем файл окружения
-sudo tee /etc/systemd/system/squid.service.d/socks-auth.conf > /dev/null <<EOF
-[Service]
-Environment="ADDR=$ADDR"
-Environment="PORT=$PORT"
-Environment="SOCKS_USER=$USER"
-Environment="SOCKS_PASS=$PASS"
+# Создаем файл с переменными окружения
+echo "Создание файла с переменными окружения..."
+sudo tee /etc/squid/socks-auth.env > /dev/null <<EOF
+ADDR=$ADDR
+PORT=$PORT
+SOCKS_USER=$USER
+SOCKS_PASS=$PASS
 EOF
 
-# Перезагружаем systemd
-sudo systemctl daemon-reload
+# Устанавливаем права на файл с переменными
+sudo chown proxy:proxy /etc/squid/socks-auth.env
+sudo chmod 600 /etc/squid/socks-auth.env
 
 # Создаем скрипт для генерации конфига
 sudo tee /etc/squid/generate-socks-config.sh > /dev/null <<'EOF'
 #!/bin/bash
 # Скрипт генерации конфигурации SOCKS peer
 
-# Читаем переменные окружения
-USER="${SOCKS_USER}"
-PASS="${SOCKS_PASS}"
-ADDR="${ADDR}"
-PORT="${PORT}"
+# Загружаем переменные из файла
+if [ -f /etc/squid/socks-auth.env ]; then
+    source /etc/squid/socks-auth.env
+fi
 
 # Проверяем, что все переменные установлены
-if [ -z "$USER" ] || [ -z "$PASS" ] || [ -z "$ADDR" ] || [ -z "$PORT" ]; then
+if [ -z "$SOCKS_USER" ] || [ -z "$SOCKS_PASS" ] || [ -z "$ADDR" ] || [ -z "$PORT" ]; then
     echo "Ошибка: Не все переменные окружения установлены"
+    echo "SOCKS_USER: $SOCKS_USER"
+    echo "ADDR: $ADDR"
+    echo "PORT: $PORT"
     exit 1
 fi
 
 # Генерируем конфигурационную строку
-echo "cache_peer $ADDR parent $PORT 0 proxy-only=1 login=$USER:$PASS round-robin no-query connect-fail-limit=2 socks5=1 name=socks_proxy" > /etc/squid/socks-peer.conf
+echo "cache_peer $ADDR parent $PORT 0 proxy-only=1 login=$SOCKS_USER:$SOCKS_PASS round-robin no-query connect-fail-limit=2 socks5=1 name=socks_proxy" > /etc/squid/socks-peer.conf
 
 # Устанавливаем права
 chown proxy:proxy /etc/squid/socks-peer.conf
@@ -236,8 +236,28 @@ http_access allow local_net
 http_access deny all
 EOF
 
+# Создаем systemd service для автоматической генерации конфига при перезапуске
+sudo tee /etc/systemd/system/squid-config.service > /dev/null <<'EOF'
+[Unit]
+Description=Generate Squid SOCKS config
+Before=squid.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/squid/generate-socks-config.sh
+RemainAfterExit=yes
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Включаем сервис генерации конфига
+sudo systemctl enable squid-config.service
+
 # Перезапускаем Squid
 echo "Перезапуск Squid..."
+sudo systemctl restart squid-config
 sudo systemctl restart squid
 sudo systemctl enable squid
 
@@ -248,7 +268,7 @@ echo "Созданные файлы:"
 echo "  /etc/squid/squid.conf"
 echo "  /etc/squid/socks-peer.conf"
 echo "  /etc/squid/domains.list ($DOMAIN_COUNT доменов)"
-echo "  /etc/systemd/system/squid.service.d/socks-auth.conf"
+echo "  /etc/squid/socks-auth.env"
 echo "  /etc/squid/generate-socks-config.sh"
 echo
 echo "Сетевые настройки:"
