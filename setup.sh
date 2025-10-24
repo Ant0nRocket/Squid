@@ -61,7 +61,6 @@ PORT=${PORT:-42379}
 read -p "Имя пользователя [proxy_user]: " USER
 USER=${USER:-proxy_user}
 
-echo "Введите пароль:"
 PASS=$(read_password "Пароль: ")
 
 # Дополнительная очистка пароля
@@ -125,6 +124,12 @@ else
     echo "IP forwarding уже включен"
 fi
 
+# Создаем пустую директорию для иконок
+echo "Создание директории для иконок..."
+sudo mkdir -p /usr/share/squid/errors/en-US
+sudo touch /usr/share/squid/errors/en-US/error.txt
+sudo chown -R proxy:proxy /usr/share/squid/errors
+
 # Обрабатываем файл доменов
 echo "Обработка файла доменов..."
 
@@ -161,19 +166,17 @@ echo
 echo "Первые 10 доменов из списка:"
 head -10 /etc/squid/domains.list
 
-# Создаем основной конфиг Squid - с доступом для localhost и отключенными иконками
+# Создаем основной конфиг Squid - минимальный и рабочий
 echo "Создание конфигурации Squid..."
 sudo tee /etc/squid/squid.conf > /dev/null <<EOF
 # Basic settings
 http_port 3128 transparent
-error_directory /dev/null
 
 # Disable caching
 cache deny all
 
 # Access Control Lists
 acl local_net src $LOCAL_NET
-acl localhost src 127.0.0.1/32
 acl socks_domains dstdomain "/etc/squid/domains.list"
 
 # SOCKS5 upstream proxy
@@ -186,8 +189,7 @@ cache_peer_access socks_peer deny all
 # Routing
 never_direct allow socks_domains
 
-# HTTP access - разрешаем localhost первым!
-http_access allow localhost
+# HTTP access
 http_access allow socks_domains
 http_access allow local_net
 http_access deny all
@@ -296,9 +298,6 @@ if sudo systemctl is-active --quiet squid; then
 else
     echo "❌ Ошибка: Squid не запустился"
     echo "Логи Squid:"
-    sudo tail -20 /var/log/squid/cache.log 2>/dev/null || echo "Логи недоступны"
-    echo
-    echo "Статус службы:"
-    sudo systemctl status squid --no-pager -l
+    sudo journalctl -u squid.service -n 20 --no-pager
     exit 1
 fi
