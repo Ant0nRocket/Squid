@@ -134,21 +134,12 @@ sudo tee /etc/squid/generate-socks-config.sh > /dev/null <<'EOF'
 #!/bin/bash
 # Скрипт генерации конфигурации SOCKS peer
 
-# Загружаем переменные из файла с проверкой
+# Загружаем переменные из файла с помощью source
 if [ -f /etc/squid/socks-auth.env ]; then
-    # Безопасно загружаем переменные
-    while IFS='=' read -r key value; do
-        # Пропускаем комментарии и пустые строки
-        [[ $key =~ ^[[:space:]]*# ]] && continue
-        [[ -z $key ]] && continue
-        
-        # Убираем кавычки и лишние пробелы
-        key=$(echo "$key" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-        value=$(echo "$value" | sed "s/^[[:space:]]*['\"]//; s/['\"][[:space:]]*$//")
-        
-        # Экспортируем переменную
-        export "$key"="$value"
-    done < /etc/squid/socks-auth.env
+    # Используем source для загрузки переменных
+    set -a  # Автоматически экспортировать все переменные
+    source /etc/squid/socks-auth.env
+    set +a  # Отключить автоматический экспорт
 fi
 
 # Проверяем, что все переменные установлены
