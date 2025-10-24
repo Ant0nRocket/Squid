@@ -170,7 +170,8 @@ head -10 /etc/squid/domains.list
 echo "Создание конфигурации Squid..."
 sudo tee /etc/squid/squid.conf > /dev/null <<EOF
 # Basic settings
-http_port 3128 transparent
+http_port 3128
+http_port 3129 transparent
 
 # Disable caching
 cache deny all
@@ -234,10 +235,10 @@ sudo iptables -F
 
 # Перенаправляем HTTP и HTTPS трафик на Squid
 echo "Добавление правил для HTTP (порт 80)..."
-sudo iptables -t nat -A PREROUTING -i $INTERFACE -p tcp --dport 80 -j REDIRECT --to-port 3128
+sudo iptables -t nat -A PREROUTING -i $INTERFACE -p tcp --dport 80 -j REDIRECT --to-port 3129
 
 echo "Добавление правил для HTTPS (порт 443)..."
-sudo iptables -t nat -A PREROUTING -i $INTERFACE -p tcp --dport 443 -j REDIRECT --to-port 3128
+sudo iptables -t nat -A PREROUTING -i $INTERFACE -p tcp --dport 443 -j REDIRECT --to-port 3129
 
 # Маскарадинг
 echo "Добавление правил маскарадинга..."
