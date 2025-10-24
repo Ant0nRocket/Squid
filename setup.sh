@@ -2,7 +2,7 @@
 
 set -e  # Прерывать выполнение при ошибках
 
-echo "=== Настройка Squid transparent proxy ==="
+echo "=== Настройка Squid 6.13 transparent proxy ==="
 
 # Функция для безопасного ввода пароля
 read_password() {
@@ -17,8 +17,7 @@ read_password() {
             echo "Пароль не может быть пустым. Попробуйте снова."
         fi
     done
-    # Убираем ВСЕ переносы строк и пробелы в начале/конце
-    echo -n "$password" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+    echo -n "$password"
 }
 
 # Функция для валидации CIDR сети
@@ -28,7 +27,6 @@ validate_network() {
         return 1
     fi
     
-    # Проверяем корректность IP и маски
     local ip=$(echo "$network" | cut -d'/' -f1)
     local mask=$(echo "$network" | cut -d'/' -f2)
     
@@ -49,6 +47,21 @@ if [ ! -f "domains.txt" ]; then
     echo "Ошибка: Файл domains.txt не найден в текущей директории!"
     echo "Убедитесь, что domains.txt находится в той же папке, что и setup.sh"
     exit 1
+fi
+
+# Проверяем версию Ubuntu
+echo "Проверка версии Ubuntu..."
+UBUNTU_VERSION=$(lsb_release -rs)
+echo "Обнаружена Ubuntu $UBUNTU_VERSION"
+
+if [[ "$UBUNTU_VERSION" != "22.04" && "$UBUNTU_VERSION" != "24.04" ]]; then
+    echo "ВНИМАНИЕ: Squid 6.13 рекомендуется для Ubuntu 22.04/24.04"
+    echo "Текущая версия: $UBUNTU_VERSION"
+    read -p "Продолжить установку? (y/N): " CONTINUE
+    if [[ ! $CONTINUE =~ ^[Yy]$ ]]; then
+        echo "Установка отменена."
+        exit 1
+    fi
 fi
 
 # Запрашиваем данные у пользователя
@@ -98,12 +111,20 @@ fi
 echo
 echo "Настройка Squid proxy..."
 
-# Обновляем пакеты и устанавливаем необходимые
-echo "Установка необходимых пакетов..."
+# Обновляем пакеты
+echo "Обновление пакетов..."
 sudo apt update
+
+# Устанавливаем Squid 6 (в Ubuntu 22.04/24.04 это версия по умолчанию)
+echo "Установка Squid 6..."
 sudo apt install -y squid iptables-persistent netfilter-persistent
 
-# Включаем IP forwarding если не включен
+# Проверяем версию Squid
+echo "Проверка версии Squid..."
+SQUID_VERSION=$(squid -v | grep Version | awk '{print $4}')
+echo "Установлен Squid $SQUID_VERSION"
+
+# Включаем IP forwarding
 echo "Проверка IP forwarding..."
 CURRENT_FORWARD=$(cat /proc/sys/net/ipv4/ip_forward)
 if [ "$CURRENT_FORWARD" != "1" ]; then
@@ -114,101 +135,6 @@ if [ "$CURRENT_FORWARD" != "1" ]; then
 else
     echo "IP forwarding уже включен"
 fi
-
-# Очищаем старые конфиги systemd если они есть
-echo "Очистка старых конфигураций systemd..."
-sudo rm -rf /etc/systemd/system/squid.service.d
-sudo rm -f /etc/systemd/system/squid-config.service
-sudo rm -f /etc/squid/socks-auth.env
-
-# Создаем скрипт для генерации конфига с прямыми переменными
-# Используем printf для точного контроля над выводом
-sudo tee /etc/squid/generate-socks-config.sh > /dev/null <<EOF
-#!/bin/bash
-# Скрипт генерации конфигурации SOCKS peer
-
-# Параметры (будут переданы как аргументы или установлены напрямую)
-ADDR='$ADDR'
-PORT='$PORT'
-SOCKS_USER='$USER'
-SOCKS_PASS='$PASS'
-LOCAL_NET='$LOCAL_NET'
-
-# Проверяем, что все переменные установлены
-if [ -z "\$SOCKS_USER" ] || [ -z "\$SOCKS_PASS" ] || [ -z "\$ADDR" ] || [ -z "\$PORT" ] || [ -z "\$LOCAL_NET" ]; then
-    echo "Ошибка: Не все переменные установлены"
-    exit 1
-fi
-
-# Дополнительно очищаем пароль от любых переносов
-CLEAN_PASS=\$(echo -n "\$SOCKS_PASS" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-
-# Экранируем пароль для использования в конфигурации Squid
-ESCAPED_PASS=\$(echo -n "\$CLEAN_PASS" | sed 's/[]\/\$*.^|[]/\\\\&/g')
-
-# Генерируем конфигурационную строку в ОДНУ строку с помощью printf
-printf "cache_peer %s parent %s 0 proxy-only login=%s:%s round-robin no-query connect-fail-limit=2 name=socks_proxy\\n" \\
-  "\$ADDR" "\$PORT" "\$SOCKS_USER" "\$ESCAPED_PASS" > /etc/squid/socks-peer.conf
-
-# Устанавливаем права
-chown proxy:proxy /etc/squid/socks-peer.conf
-chmod 600 /etc/squid/socks-peer.conf
-
-echo "Конфигурация SOCKS peer обновлена: \$ADDR:\$PORT"
-echo "Локальная сеть: \$LOCAL_NET"
-
-# Создаем основной конфиг Squid
-cat > /etc/squid/squid.conf <<SQUIDEOF
-# Базовые настройки transparent proxy
-http_port 3128 transparent
-visible_hostname ubuntu-vpc
-
-# Отключаем кэширование для transparent proxy
-cache deny all
-
-# ACL для локальной сети
-acl local_net src \$LOCAL_NET
-
-# Создаем ACL для доменов из файла через внешний файл
-acl socks_domains dstdomain "/etc/squid/domains.list"
-
-# Подключаем конфигурацию SOCKS peer
-include /etc/squid/socks-peer.conf
-
-# Управление доступом к SOCKS proxy
-cache_peer_access socks_proxy allow socks_domains
-cache_peer_access socks_proxy deny all
-
-# Правила маршрутизации - для доменов из списка используем SOCKS
-never_direct allow socks_domains
-
-# Для всего остального - прямое соединение
-always_direct allow all
-
-# Разрешаем доступ из локальной сети
-http_access allow local_net
-
-# Запрещаем всё остальное
-http_access deny all
-
-# Логирование
-access_log /var/log/squid/access.log
-cache_log /var/log/squid/cache.log
-
-# Безопасность
-coredump_dir /var/spool/squid
-SQUIDEOF
-
-echo "Основной конфиг Squid обновлен"
-EOF
-
-# Делаем скрипт исполняемым
-sudo chmod +x /etc/squid/generate-socks-config.sh
-
-# Запускаем генерацию конфига
-echo "Генерация конфигурации SOCKS..."
-sudo /etc/squid/generate-socks-config.sh
-
 
 # Обрабатываем файл доменов
 echo "Обработка файла доменов..."
@@ -246,23 +172,86 @@ echo
 echo "Первые 10 доменов из списка:"
 head -10 /etc/squid/domains.list
 
+# Создаем основной конфиг Squid 6
+echo "Создание конфигурации Squid 6..."
+sudo tee /etc/squid/squid.conf > /dev/null <<EOF
+# Squid 6.13 Configuration
+# Transparent Proxy with SOCKS5 support
+
+# Basic settings
+http_port 3128 transparent
+dns_v4_first on
+via off
+forwarded_for delete
+
+# Security
+tls_outgoing_options cafile=/etc/ssl/certs/ca-certificates.crt
+
+# Disable caching for transparent proxy
+cache deny all
+
+# Access Control Lists
+acl local_net src $LOCAL_NET
+acl SSL_ports port 443
+acl Safe_ports port 80
+acl Safe_ports port 443
+acl CONNECT method CONNECT
+
+# Domains for SOCKS routing
+acl socks_domains dstdomain "/etc/squid/domains.list"
+
+# SOCKS5 upstream proxy
+cache_peer $ADDR parent $PORT 0 \\
+    proxy-only \\
+    login=$USER:$PASS \\
+    connect-timeout=5 \\
+    connect-fail-limit=3 \\
+    name=socks_peer \\
+    socksversion=5
+
+# Access control for SOCKS
+cache_peer_access socks_peer allow socks_domains
+cache_peer_access socks_peer deny all
+
+# Routing rules
+never_direct allow socks_domains
+always_direct deny socks_domains
+
+# HTTP access rules
+http_access allow local_net socks_domains
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+http_access allow local_net
+http_access deny all
+
+# Logging (minimal)
+access_log daemon:/var/log/squid/access.log
+cache_log /var/log/squid/cache.log
+
+# Shutdown timeout
+shutdown_lifetime 5 seconds
+EOF
+
+# Устанавливаем правильные права на конфиг
+sudo chown proxy:proxy /etc/squid/squid.conf
+sudo chmod 644 /etc/squid/squid.conf
+
+# Создаем директории для логов
+echo "Настройка логов..."
+sudo mkdir -p /var/log/squid
+sudo chown -R proxy:proxy /var/log/squid
+
 # Настройка iptables для transparent proxy
 echo
 echo "Настройка iptables..."
 
-# Определяем сетевой интерфейс (может потребоваться изменить)
-INTERFACE="enp0s3"
-
-# Если интерфейс не существует, пытаемся определить автоматически
-if ! ip link show "$INTERFACE" > /dev/null 2>&1; then
-    echo "Автоматическое определение сетевого интерфейса..."
-    INTERFACE=$(ip route | grep default | awk '{print $5}' | head -1)
-    if [ -z "$INTERFACE" ]; then
-        echo "Ошибка: Не удалось определить сетевой интерфейс"
-        exit 1
-    fi
-    echo "Используется интерфейс: $INTERFACE"
+# Определяем сетевой интерфейс
+INTERFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+if [ -z "$INTERFACE" ]; then
+    echo "Ошибка: Не удалось определить сетевой интерфейс"
+    exit 1
 fi
+echo "Используется интерфейс: $INTERFACE"
 
 # Очищаем старые правила
 echo "Очистка старых правил iptables..."
@@ -270,11 +259,10 @@ sudo iptables -t nat -F
 sudo iptables -t mangle -F
 sudo iptables -F
 
-# Перенаправляем HTTP трафик на Squid
+# Перенаправляем HTTP и HTTPS трафик на Squid
 echo "Добавление правил для HTTP (порт 80)..."
 sudo iptables -t nat -A PREROUTING -i $INTERFACE -p tcp --dport 80 -j REDIRECT --to-port 3128
 
-# Перенаправляем HTTPS трафик на Squid
 echo "Добавление правил для HTTPS (порт 443)..."
 sudo iptables -t nat -A PREROUTING -i $INTERFACE -p tcp --dport 443 -j REDIRECT --to-port 3128
 
@@ -282,54 +270,64 @@ sudo iptables -t nat -A PREROUTING -i $INTERFACE -p tcp --dport 443 -j REDIRECT 
 echo "Добавление правил маскарадинга..."
 sudo iptables -t nat -A POSTROUTING -o $INTERFACE -j MASQUERADE
 
-# Сохраняем правила для persistence
+# Сохраняем правила
 echo "Сохранение правил iptables..."
 sudo netfilter-persistent save
 
-# Убедимся, что директории для логов существуют
-sudo mkdir -p /var/log/squid
-sudo chown proxy:proxy /var/log/squid
-
-# Перезагружаем systemd
-echo "Перезагрузка systemd..."
-sudo systemctl daemon-reload
-
+# Проверяем конфигурацию Squid
 echo "Проверка конфигурации Squid..."
-sudo squid -k parse
+if ! sudo squid -k parse; then
+    echo "Ошибка в конфигурации Squid!"
+    echo "Проверьте файл /etc/squid/squid.conf"
+    exit 1
+fi
 
-if [ $? -eq 0 ]; then
-    echo "Конфигурация Squid проверена успешно"
-    
-    echo "Перезапуск Squid..."
-    sudo systemctl restart squid
-    sudo systemctl enable squid
-    
-    echo "Проверка статуса Squid..."
-    sleep 2
+# Инициализируем кеш (даже если он отключен, Squid требует структуру)
+echo "Инициализация структуры Squid..."
+sudo squid -z
+
+# Перезапускаем Squid
+echo "Запуск Squid..."
+sudo systemctl enable squid
+sudo systemctl restart squid
+
+# Ждем запуска
+sleep 3
+
+# Проверяем статус
+echo "Проверка статуса Squid..."
+if ! sudo systemctl is-active --quiet squid; then
+    echo "Ошибка: Squid не запустился"
     sudo systemctl status squid --no-pager -l
-else
-    echo "Ошибка в конфигурации Squid. Проверьте файлы конфигурации."
-    echo "Лог ошибок:"
-    sudo tail -20 /var/log/squid/cache.log || echo "Лог не доступен"
+    echo "Логи:"
+    sudo tail -20 /var/log/squid/cache.log || echo "Логи недоступны"
     exit 1
 fi
 
 echo
-echo "=== Настройка завершена! ==="
-echo "Установленные пакеты: squid, iptables-persistent"
-echo "Созданные файлы:"
-echo "  /etc/squid/squid.conf"
-echo "  /etc/squid/socks-peer.conf"
-echo "  /etc/squid/domains.list ($DOMAIN_COUNT доменов)"
-echo "  /etc/squid/generate-socks-config.sh"
+echo "=== Настройка завершена успешно! ==="
 echo
-echo "Сетевые настройки:"
-echo "  net.ipv4.ip_forward = $(cat /proc/sys/net/ipv4/ip_forward)"
+echo "Информация о системе:"
+echo "  Ubuntu: $UBUNTU_VERSION"
+echo "  Squid: $SQUID_VERSION"
 echo "  Интерфейс: $INTERFACE"
 echo "  Локальная сеть: $LOCAL_NET"
+echo "  Домены для SOCKS: $DOMAIN_COUNT"
+echo
+echo "Сетевые настройки:"
+echo "  IP forwarding: $(cat /proc/sys/net/ipv4/ip_forward)"
 echo
 echo "Правила iptables:"
-sudo iptables -t nat -L PREROUTING -n
+sudo iptables -t nat -L PREROUTING -n --line-numbers
 echo
 echo "Статус Squid:"
-sudo systemctl status squid --no-pager -l
+sudo systemctl status squid --no-pager --lines=10
+
+# Тестирование
+echo
+echo "Для тестирования выполните на клиенте:"
+echo "curl -I http://google.com"
+echo "curl -I https://google.com"
+echo
+echo "Домены из списка будут идти через SOCKS прокси"
+echo "Остальной трафик - напрямую"
