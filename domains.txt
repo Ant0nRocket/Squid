@@ -15,10 +15,6 @@ ytimg.com
 
 ###Google google.com
 mtalk.google.com
-manifests.googlevideo.com
-googleapis.com
-youtube.googleapis.com
-gmailpostmastertools.googleapis.com
 NS1.google.com
 NS2.google.com
 NS3.google.com
@@ -33,7 +29,6 @@ foxnews.com
 cnn.com
 dw.com
 bbc.com
-bbc.co.uk
 co.uk
 inforesist.org
 france24.com
