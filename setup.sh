@@ -153,7 +153,7 @@ if [ -z "$SOCKS_USER" ] || [ -z "$SOCKS_PASS" ] || [ -z "$ADDR" ] || [ -z "$PORT
 fi
 
 # Генерируем конфигурационную строку
-echo "cache_peer $ADDR parent $PORT 0 proxy-only=1 login=$SOCKS_USER:$SOCKS_PASS round-robin no-query connect-fail-limit=2 socks5=1 name=socks_proxy" > /etc/squid/socks-peer.conf
+echo "cache_peer $ADDR parent $PORT 0 proxy-only login=$SOCKS_USER:$SOCKS_PASS round-robin no-query connect-fail-limit=2 name=socks_proxy" > /etc/squid/socks-peer.conf
 
 # Устанавливаем права
 chown proxy:proxy /etc/squid/socks-peer.conf
@@ -246,31 +246,33 @@ sudo iptables -t nat -A POSTROUTING -o $INTERFACE -j MASQUERADE
 echo "Сохранение правил iptables..."
 sudo netfilter-persistent save
 
-# Создаем основной конфиг Squid с динамической локальной сетью
-echo "Создание основного конфига Squid..."
+# Создаем основной конфиг Squid для Ubuntu 18 (Squid 3.5)
+echo "Создание основного конфига Squid для Ubuntu 18..."
 sudo tee /etc/squid/squid.conf > /dev/null <<EOF
 # Базовые настройки transparent proxy
 http_port 3128 transparent
 visible_hostname ubuntu-vpc
 
-# Кэширование не нужно для transparent
+# Отключаем кэширование для transparent proxy
 cache deny all
 
 # ACL для локальной сети
 acl local_net src $LOCAL_NET
 
-# ACL для доменов из файла
+# Создаем ACL для доменов из файла через внешний файл
 acl socks_domains dstdomain "/etc/squid/domains.list"
 
-# Настройка SOCKS для доменов из списка
+# Подключаем конфигурацию SOCKS peer
 include /etc/squid/socks-peer.conf
 
 # Управление доступом к SOCKS proxy
 cache_peer_access socks_proxy allow socks_domains
 cache_peer_access socks_proxy deny all
 
-# Правила маршрутизации
+# Правила маршрутизации - для доменов из списка используем SOCKS
 never_direct allow socks_domains
+
+# Для всего остального - прямое соединение
 always_direct allow all
 
 # Разрешаем доступ из локальной сети
@@ -278,32 +280,44 @@ http_access allow local_net
 
 # Запрещаем всё остальное
 http_access deny all
+
+# Логирование
+access_log /var/log/squid/access.log
+cache_log /var/log/squid/cache.log
+
+# Безопасность
+coredump_dir /var/spool/squid
 EOF
 
-# Создаем systemd service для автоматической генерации конфига при перезапуске
-sudo tee /etc/systemd/system/squid-config.service > /dev/null <<'EOF'
-[Unit]
-Description=Generate Squid SOCKS config
-Before=squid.service
+# Убедимся, что директории для логов существуют
+sudo mkdir -p /var/log/squid
+sudo chown proxy:proxy /var/log/squid
 
-[Service]
-Type=oneshot
-ExecStart=/etc/squid/generate-socks-config.sh
-RemainAfterExit=yes
-User=root
+# Перезагружаем systemd и запускаем сервисы
+echo "Перезагрузка systemd..."
+sudo systemctl daemon-reload
 
-[Install]
-WantedBy=multi-user.target
-EOF
+echo "Запуск сервиса генерации конфига..."
+sudo systemctl start squid-config
 
-# Включаем сервис генерации конфига
-sudo systemctl enable squid-config.service
+echo "Проверка конфигурации Squid..."
+sudo squid -k parse
 
-# Перезапускаем Squid
-echo "Перезапуск Squid..."
-sudo systemctl restart squid-config
-sudo systemctl restart squid
-sudo systemctl enable squid
+if [ $? -eq 0 ]; then
+    echo "Конфигурация Squid проверена успешно"
+    
+    echo "Перезапуск Squid..."
+    sudo systemctl restart squid
+    sudo systemctl enable squid
+    
+    echo "Проверка статуса Squid..."
+    sudo systemctl status squid --no-pager -l
+else
+    echo "Ошибка в конфигурации Squid. Проверьте файлы конфигурации."
+    echo "Лог ошибок:"
+    sudo tail -20 /var/log/squid/cache.log || echo "Лог не доступен"
+    exit 1
+fi
 
 echo
 echo "=== Настройка завершена! ==="
