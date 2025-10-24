@@ -1,24 +1,17 @@
 ####Список доменных имен для обхода ограничений
 
 ### YouTube
-youtube.com
-youtu.be
+1e100.net
 ggpht.com
-ytimg.com
-i.ytimg.com
-i9.ytimg.com
-yt3.ggpht.com
 l.google.com
 play.google.com
-youtubei.googleapis.com
-wide-youtube.l.google.com
 nhacmp3youtube.com
 googleusercontent.com
-yt3.googleusercontent.com
 googleapis.com
 googlevideo.com
-youtubei.googleapis.com
-1e100.net
+youtube.com
+youtu.be
+ytimg.com
 
 ###Google google.com
 mtalk.google.com
@@ -40,14 +33,8 @@ foxnews.com
 cnn.com
 dw.com
 bbc.com
-bbc.com/weather
 bbc.co.uk
-bbc.co.uk/weather
-static.files.bbci.co.uk
-mybbc-analytics.files.bbci.co.uk
-weather.files.bbci.co.uk
-nav.files.bbci.co.uk
-m.files.bbci.co.uk
+co.uk
 inforesist.org
 france24.com
 accuweather.com
@@ -62,10 +49,7 @@ currenttime.tv
 ###Мессенджеры
 whatsapp.com
 whatsapp.net
-static.whatsapp.net
-g.whatsapp.net
-time.android.com
-web.whatsapp.com
+android.com
 signal.org
 getsession.org
 amazon.com
@@ -83,28 +67,20 @@ rutor.info
 rutor.is
 mega-tor.org
 kinozal.tv
-#nnm-club.me
-#nnm-club.ws
-#tfile.me
-#tfile-home.org
+nnm-club.me
+nnm-club.ws
+tfile.me
+tfile-home.org
 #tfile1.cc
-#megatfile.cc
-#megapeer.org
-#megapeer.ru
+megatfile.cc
+megapeer.org
+megapeer.ru
 tapochek.net
-#tparser.org
-#tparser.me
+tparser.org
+tparser.me
 rustorka.com
-#uniongang.tv
+uniongang.tv
 fast-torrent.ru
-
-###Каталоги медиаконтента для программ 
-rezka.ag
-hdrezka.ag
-hdrezka.me
-filmix.co
-filmix.cc
-seasonvar.ru
 
 ###Книги
 lib.rus.ec
