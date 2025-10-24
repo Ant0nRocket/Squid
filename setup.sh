@@ -20,6 +20,29 @@ read_password() {
     echo "$password"
 }
 
+# Функция для валидации CIDR сети
+validate_network() {
+    local network="$1"
+    if [[ ! $network =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+        return 1
+    fi
+    
+    # Проверяем корректность IP и маски
+    local ip=$(echo "$network" | cut -d'/' -f1)
+    local mask=$(echo "$network" | cut -d'/' -f2)
+    
+    IFS='.' read -r i1 i2 i3 i4 <<< "$ip"
+    if [ "$i1" -gt 255 ] || [ "$i2" -gt 255 ] || [ "$i3" -gt 255 ] || [ "$i4" -gt 255 ]; then
+        return 1
+    fi
+    
+    if [ "$mask" -lt 0 ] || [ "$mask" -gt 32 ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
 # Проверяем наличие файла domains.txt
 if [ ! -f "domains.txt" ]; then
     echo "Ошибка: Файл domains.txt не найден в текущей директории!"
@@ -42,12 +65,27 @@ USER=${USER:-proxy_user}
 echo "Введите пароль:"
 PASS=$(read_password "Пароль: ")
 
+# Запрашиваем локальную сеть
+echo
+echo "Настройка локальной сети для доступа к прокси:"
+while true; do
+    read -p "Локальная сеть в формате CIDR [192.168.1.0/24]: " LOCAL_NET
+    LOCAL_NET=${LOCAL_NET:-192.168.1.0/24}
+    
+    if validate_network "$LOCAL_NET"; then
+        break
+    else
+        echo "Ошибка: Неверный формат сети. Используйте формат CIDR (например: 192.168.1.0/24)"
+    fi
+done
+
 # Показываем введенные данные (без пароля)
 echo
 echo "Проверьте введенные данные:"
 echo "Сервер: $ADDR:$PORT"
 echo "Пользователь: $USER"
 echo "Пароль: ********"
+echo "Локальная сеть: $LOCAL_NET"
 echo "Файл доменов: domains.txt ($(wc -l < domains.txt) строк)"
 echo
 
@@ -77,13 +115,14 @@ else
     echo "IP forwarding уже включен"
 fi
 
-# Создаем файл с переменными окружения
+# Создаем файл с переменными окружения с правильным экранированием
 echo "Создание файла с переменными окружения..."
 sudo tee /etc/squid/socks-auth.env > /dev/null <<EOF
-ADDR=$ADDR
-PORT=$PORT
-SOCKS_USER=$USER
-SOCKS_PASS=$PASS
+ADDR='$ADDR'
+PORT='$PORT'
+SOCKS_USER='$USER'
+SOCKS_PASS='$PASS'
+LOCAL_NET='$LOCAL_NET'
 EOF
 
 # Устанавливаем права на файл с переменными
@@ -95,17 +134,30 @@ sudo tee /etc/squid/generate-socks-config.sh > /dev/null <<'EOF'
 #!/bin/bash
 # Скрипт генерации конфигурации SOCKS peer
 
-# Загружаем переменные из файла
+# Загружаем переменные из файла с проверкой
 if [ -f /etc/squid/socks-auth.env ]; then
-    source /etc/squid/socks-auth.env
+    # Безопасно загружаем переменные
+    while IFS='=' read -r key value; do
+        # Пропускаем комментарии и пустые строки
+        [[ $key =~ ^[[:space:]]*# ]] && continue
+        [[ -z $key ]] && continue
+        
+        # Убираем кавычки и лишние пробелы
+        key=$(echo "$key" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+        value=$(echo "$value" | sed "s/^[[:space:]]*['\"]//; s/['\"][[:space:]]*$//")
+        
+        # Экспортируем переменную
+        export "$key"="$value"
+    done < /etc/squid/socks-auth.env
 fi
 
 # Проверяем, что все переменные установлены
-if [ -z "$SOCKS_USER" ] || [ -z "$SOCKS_PASS" ] || [ -z "$ADDR" ] || [ -z "$PORT" ]; then
+if [ -z "$SOCKS_USER" ] || [ -z "$SOCKS_PASS" ] || [ -z "$ADDR" ] || [ -z "$PORT" ] || [ -z "$LOCAL_NET" ]; then
     echo "Ошибка: Не все переменные окружения установлены"
     echo "SOCKS_USER: $SOCKS_USER"
-    echo "ADDR: $ADDR"
+    echo "ADDR: $ADDR" 
     echo "PORT: $PORT"
+    echo "LOCAL_NET: $LOCAL_NET"
     exit 1
 fi
 
@@ -117,6 +169,7 @@ chown proxy:proxy /etc/squid/socks-peer.conf
 chmod 600 /etc/squid/socks-peer.conf
 
 echo "Конфигурация SOCKS peer обновлена: $ADDR:$PORT"
+echo "Локальная сеть: $LOCAL_NET"
 EOF
 
 # Делаем скрипт исполняемым
@@ -167,7 +220,7 @@ echo
 echo "Настройка iptables..."
 
 # Определяем сетевой интерфейс (может потребоваться изменить)
-INTERFACE="ens33"
+INTERFACE="enp0s3"
 
 # Если интерфейс не существует, пытаемся определить автоматически
 if ! ip link show "$INTERFACE" > /dev/null 2>&1; then
@@ -202,9 +255,9 @@ sudo iptables -t nat -A POSTROUTING -o $INTERFACE -j MASQUERADE
 echo "Сохранение правил iptables..."
 sudo netfilter-persistent save
 
-# Создаем основной конфиг Squid
+# Создаем основной конфиг Squid с динамической локальной сетью
 echo "Создание основного конфига Squid..."
-sudo tee /etc/squid/squid.conf > /dev/null <<'EOF'
+sudo tee /etc/squid/squid.conf > /dev/null <<EOF
 # Базовые настройки transparent proxy
 http_port 3128 transparent
 visible_hostname ubuntu-vpc
@@ -213,7 +266,7 @@ visible_hostname ubuntu-vpc
 cache deny all
 
 # ACL для локальной сети
-acl local_net src 192.168.0.0/24
+acl local_net src $LOCAL_NET
 
 # ACL для доменов из файла
 acl socks_domains dstdomain "/etc/squid/domains.list"
@@ -274,6 +327,7 @@ echo
 echo "Сетевые настройки:"
 echo "  net.ipv4.ip_forward = $(cat /proc/sys/net/ipv4/ip_forward)"
 echo "  Интерфейс: $INTERFACE"
+echo "  Локальная сеть: $LOCAL_NET"
 echo
 echo "Правила iptables:"
 sudo iptables -t nat -L PREROUTING -n
