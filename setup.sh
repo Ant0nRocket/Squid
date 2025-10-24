@@ -115,6 +115,12 @@ else
     echo "IP forwarding уже включен"
 fi
 
+# Очищаем старые конфиги systemd если они есть
+echo "Очистка старых конфигураций systemd..."
+sudo rm -rf /etc/systemd/system/squid.service.d
+sudo rm -f /etc/systemd/system/squid-config.service
+sudo rm -f /etc/squid/socks-auth.env
+
 # Создаем скрипт для генерации конфига с прямыми переменными
 # Используем printf для точного контроля над выводом
 sudo tee /etc/squid/generate-socks-config.sh > /dev/null <<EOF
@@ -202,6 +208,7 @@ sudo chmod +x /etc/squid/generate-socks-config.sh
 # Запускаем генерацию конфига
 echo "Генерация конфигурации SOCKS..."
 sudo /etc/squid/generate-socks-config.sh
+
 
 # Обрабатываем файл доменов
 echo "Обработка файла доменов..."
