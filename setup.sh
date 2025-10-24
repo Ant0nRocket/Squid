@@ -161,17 +161,19 @@ echo
 echo "Первые 10 доменов из списка:"
 head -10 /etc/squid/domains.list
 
-# Создаем основной конфиг Squid - БЕЗ ИКОНОК!
+# Создаем основной конфиг Squid - с доступом для localhost и отключенными иконками
 echo "Создание конфигурации Squid..."
 sudo tee /etc/squid/squid.conf > /dev/null <<EOF
 # Basic settings
 http_port 3128 transparent
+error_directory /dev/null
 
 # Disable caching
 cache deny all
 
 # Access Control Lists
 acl local_net src $LOCAL_NET
+acl localhost src 127.0.0.1/32
 acl socks_domains dstdomain "/etc/squid/domains.list"
 
 # SOCKS5 upstream proxy
@@ -184,7 +186,8 @@ cache_peer_access socks_peer deny all
 # Routing
 never_direct allow socks_domains
 
-# HTTP access
+# HTTP access - разрешаем localhost первым!
+http_access allow localhost
 http_access allow socks_domains
 http_access allow local_net
 http_access deny all
@@ -196,7 +199,9 @@ EOF
 
 # Проверяем что записалось в конфиг
 echo "Проверка конфигурации..."
+echo "=== Строка cache_peer ==="
 sudo grep "cache_peer" /etc/squid/squid.conf
+echo "=== Конец проверки ==="
 
 # Устанавливаем правильные права на конфиг
 sudo chown proxy:proxy /etc/squid/squid.conf
@@ -265,28 +270,35 @@ sleep 3
 echo "Проверка статуса Squid..."
 if sudo systemctl is-active --quiet squid; then
     echo "✅ Squid запущен успешно"
+    
+    echo
+    echo "=== Настройка завершена успешно! ==="
+    echo
+    echo "Информация о системе:"
+    echo "  Squid: $SQUID_VERSION"
+    echo "  Интерфейс: $INTERFACE"
+    echo "  Локальная сеть: $LOCAL_NET"
+    echo "  Домены для SOCKS: $DOMAIN_COUNT"
+    echo
+    echo "Сетевые настройки:"
+    echo "  IP forwarding: $(cat /proc/sys/net/ipv4/ip_forward)"
+    echo
+    echo "Правила iptables:"
+    sudo iptables -t nat -L PREROUTING -n --line-numbers
+    echo
+    echo "Статус Squid:"
+    sudo systemctl status squid --no-pager --lines=5
+
+    echo
+    echo "Для тестирования выполните на клиенте:"
+    echo "curl -I https://youtube.com  # через SOCKS"
+    echo "curl -I https://google.com   # напрямую"
 else
     echo "❌ Ошибка: Squid не запустился"
+    echo "Логи Squid:"
+    sudo tail -20 /var/log/squid/cache.log 2>/dev/null || echo "Логи недоступны"
+    echo
+    echo "Статус службы:"
     sudo systemctl status squid --no-pager -l
     exit 1
 fi
-
-echo
-echo "=== Настройка завершена успешно! ==="
-echo
-echo "Информация о системе:"
-echo "  Squid: $SQUID_VERSION"
-echo "  Интерфейс: $INTERFACE"
-echo "  Локальная сеть: $LOCAL_NET"
-echo "  Домены для SOCKS: $DOMAIN_COUNT"
-echo
-echo "Правила iptables:"
-sudo iptables -t nat -L PREROUTING -n --line-numbers
-echo
-echo "Статус Squid:"
-sudo systemctl status squid --no-pager --lines=5
-
-echo
-echo "Для тестирования выполните на клиенте:"
-echo "curl -I https://youtube.com  # через SOCKS"
-echo "curl -I https://google.com   # напрямую"
